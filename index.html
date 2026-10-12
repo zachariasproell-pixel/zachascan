@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Beleg scannen">
+<meta name="theme-color" content="#0E151C">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<title>Beleg scannen</title>
+<style>
+  :root{
+    --paper:#EFF3F6; --surface:#FFFFFF; --surface-2:#F7FAFC; --ink:#13202B; --muted:#5B6C7A; --faint:#8494A1;
+    --line:#DBE3EA; --accent:#1F5F8B; --accent-soft:#E3EEF6; --ok:#2E7D5B; --ok-soft:#E1F0E9; --warn:#A96A14; --crit:#AE3A33;
+    --cam:#0B1117; --camline:#6CC49B; --camseek:#61A9D6;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --paper:#0E151C; --surface:#161F29; --surface-2:#1B2631; --ink:#E3EBF2; --muted:#94A6B4; --faint:#6F8291;
+      --line:#27333F; --accent:#61A9D6; --accent-soft:#172936; --ok:#6CC49B; --ok-soft:#152A22; --warn:#DDA95A; --crit:#E0827B; }
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{margin:0; height:100%; background:var(--cam); color:var(--ink); font:15px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif; overscroll-behavior:none}
+  button{font:inherit; cursor:pointer}
+  .hide{display:none!important}
+  .screen{position:fixed; inset:0; display:flex; flex-direction:column}
+
+  /* ---------- Kamera ---------- */
+  #cam{background:var(--cam); color:#fff}
+  #camWrap{position:relative; flex:1; overflow:hidden; background:#000}
+  #video{position:absolute; inset:0; width:100%; height:100%; object-fit:cover}
+  #ov{position:absolute; inset:0; width:100%; height:100%; pointer-events:none}
+  .topbar{position:absolute; left:0; right:0; top:0; padding:calc(env(safe-area-inset-top,0px) + 10px) 14px 10px; display:flex; gap:10px; align-items:center; justify-content:space-between;
+    background:linear-gradient(rgba(0,0,0,.55),rgba(0,0,0,0)); z-index:2}
+  .pill{background:rgba(20,28,36,.72); color:#fff; border:1px solid rgba(255,255,255,.18); border-radius:999px; padding:7px 13px; font-size:14px; font-weight:600; backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px)}
+  .pill[aria-pressed="true"]{background:#fff; color:#0B1117}
+  #hint{position:absolute; left:50%; top:calc(env(safe-area-inset-top,0px) + 64px); transform:translateX(-50%); z-index:2; white-space:nowrap}
+  #hint.ready{background:rgba(46,125,91,.9); border-color:rgba(255,255,255,.3)}
+  .camfoot{padding:14px 18px calc(env(safe-area-inset-bottom,0px) + 18px); display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:10px; background:var(--cam)}
+  #shutter{width:76px; height:76px; border-radius:50%; border:4px solid #fff; background:rgba(255,255,255,.18); position:relative}
+  #shutter::after{content:""; position:absolute; inset:7px; border-radius:50%; background:#fff; transition:transform .12s}
+  #shutter:active::after{transform:scale(.88)}
+  #shutter svg{position:absolute; inset:-4px; width:76px; height:76px; transform:rotate(-90deg)}
+  #thumbBtn{justify-self:start; width:52px; height:68px; border-radius:8px; border:2px solid rgba(255,255,255,.7); background:#222 center/cover no-repeat; color:#fff; font-weight:700; font-size:13px; display:flex; align-items:flex-end; justify-content:center; padding-bottom:3px; visibility:hidden}
+  #thumbBtn.da{visibility:visible}
+  #fertigBtn{justify-self:end; background:var(--camline); color:#062014; border:0; border-radius:999px; padding:11px 16px; font-weight:700; visibility:hidden}
+  #fertigBtn.da{visibility:visible}
+  .flash{position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none; transition:opacity .25s}
+  .flash.an{opacity:.8; transition:none}
+  #busy{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.45); color:#fff; font-weight:600; z-index:3}
+
+  /* ---------- Bearbeiten / Senden (hell) ---------- */
+  .hell{background:var(--paper); color:var(--ink)}
+  .kopf{padding:calc(env(safe-area-inset-top,0px) + 10px) 16px 10px; display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--surface); border-bottom:1px solid var(--line)}
+  .kopf b{font-size:16px}
+  .lnk{background:none; border:0; color:var(--accent); font-weight:600; padding:6px 2px}
+  .bühne{flex:1; display:flex; align-items:center; justify-content:center; padding:14px; overflow:hidden; position:relative}
+  #edCanvas{max-width:100%; max-height:100%; box-shadow:0 2px 14px rgba(0,0,0,.18); background:#fff}
+  .leiste{padding:10px 14px calc(env(safe-area-inset-bottom,0px) + 14px); background:var(--surface); border-top:1px solid var(--line); display:flex; flex-direction:column; gap:10px}
+  .chips{display:flex; gap:8px; overflow-x:auto; padding-bottom:2px; scrollbar-width:none}
+  .chips::-webkit-scrollbar{display:none}
+  .chip{flex:none; border:1.5px solid var(--line); background:var(--surface-2); color:var(--muted); border-radius:999px; padding:7px 13px; font-weight:600; font-size:14px}
+  .chip[aria-pressed="true"]{background:var(--accent); border-color:var(--accent); color:#fff}
+  .knopfreihe{display:flex; gap:8px}
+  .knopfreihe button{flex:1}
+  .btn{border:0; border-radius:12px; padding:13px 14px; font-weight:700; background:var(--accent); color:#fff}
+  .btn.zweit{background:var(--surface-2); color:var(--ink); border:1.5px solid var(--line)}
+  .btn:disabled{opacity:.5}
+
+  /* Ecken anpassen */
+  #adStage{flex:1; position:relative; overflow:hidden; touch-action:none; background:#111}
+  #adCanvas{position:absolute; left:0; top:0}
+  #adSvg{position:absolute; left:0; top:0; overflow:visible}
+  #lupe{position:absolute; width:120px; height:120px; border-radius:50%; border:3px solid #fff; box-shadow:0 4px 16px rgba(0,0,0,.5); pointer-events:none}
+
+  /* Senden */
+  .scroll{flex:1; overflow-y:auto; padding:14px 16px 20px; display:flex; flex-direction:column; gap:16px}
+  .karte{background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:14px}
+  .karte h3{margin:0 0 4px; font-size:13px; letter-spacing:.04em; text-transform:uppercase; color:var(--muted)}
+  .karte p{margin:0 0 10px; color:var(--muted); font-size:13.5px}
+  .seiten{display:flex; gap:10px; overflow-x:auto; padding-bottom:4px}
+  .seite{flex:none; position:relative; width:84px}
+  .seite img{width:84px; height:112px; object-fit:cover; border-radius:6px; border:1px solid var(--line); background:#fff; display:block}
+  .seite button{position:absolute; top:-7px; right:-7px; width:24px; height:24px; border-radius:50%; border:0; background:var(--crit); color:#fff; font-weight:700; line-height:1}
+  .seite span{display:block; text-align:center; font-size:12px; color:var(--muted); margin-top:3px}
+  .wrap{flex-wrap:wrap; overflow:visible}
+  #status{font-size:14px; color:var(--muted)}
+  #status.ok{color:var(--ok); font-weight:600}
+  #status.err{color:var(--crit); font-weight:600}
+  #queueInfo{font-size:13px; color:var(--warn)}
+  textarea, input[type=text]{width:100%; font:inherit; border:1.5px solid var(--line); border-radius:10px; padding:10px; background:var(--surface-2); color:var(--ink)}
+  #setup .scroll{gap:12px}
+  code{font-size:12.5px; word-break:break-all}
+</style>
+</head>
+<body>
+
+<!-- ===== Kamera ===== -->
+<section id="cam" class="screen">
+  <div id="camWrap">
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="ov"></canvas>
+    <div class="flash" id="flash"></div>
+    <div class="topbar">
+      <button class="pill" id="closeBtn" type="button" aria-label="Abbrechen">Abbrechen</button>
+      <div style="display:flex; gap:8px">
+        <button class="pill hide" id="torchBtn" type="button" aria-pressed="false">Licht</button>
+        <button class="pill" id="autoBtn" type="button" aria-pressed="true">Auto</button>
+      </div>
+    </div>
+    <div class="pill" id="hint">Kamera startet …</div>
+    <div id="busy" class="hide">wird verarbeitet …</div>
+  </div>
+  <div class="camfoot">
+    <button id="thumbBtn" type="button" aria-label="Seiten ansehen"></button>
+    <button id="shutter" type="button" aria-label="Auslösen"><svg viewBox="0 0 76 76"><circle id="ring" cx="38" cy="38" r="36" fill="none" stroke="#6CC49B" stroke-width="4" stroke-dasharray="226" stroke-dashoffset="226"/></svg></button>
+    <button id="fertigBtn" type="button">Fertig</button>
+  </div>
+  <input type="file" id="fileIn" accept="image/*" capture="environment" class="hide">
+</section>
+
+<!-- ===== Seite prüfen ===== -->
+<section id="edit" class="screen hell hide">
+  <div class="kopf"><button class="lnk" id="edRetake" type="button">Neu aufnehmen</button><b id="edTitel">Seite 1</b><button class="lnk" id="edCorners" type="button">Ecken</button></div>
+  <div class="bühne"><canvas id="edCanvas"></canvas></div>
+  <div class="leiste">
+    <div class="chips" id="filterChips"></div>
+    <div class="knopfreihe">
+      <button class="btn zweit" id="edRot" type="button">Drehen</button>
+      <button class="btn zweit" id="edMore" type="button">+ Seite</button>
+      <button class="btn" id="edDone" type="button">Fertig</button>
+    </div>
+  </div>
+</section>
+
+<!-- ===== Ecken anpassen ===== -->
+<section id="adjust" class="screen hell hide">
+  <div class="kopf"><button class="lnk" id="adFull" type="button">Ganzes Bild</button><b>Ecken ziehen</b><button class="lnk" id="adOk" type="button">Übernehmen</button></div>
+  <div id="adStage"><canvas id="adCanvas"></canvas><svg id="adSvg"></svg><canvas id="lupe" class="hide" width="120" height="120"></canvas></div>
+</section>
+
+<!-- ===== Senden ===== -->
+<section id="send" class="screen hell hide">
+  <div class="kopf"><button class="lnk" id="sdBack" type="button">Weiter scannen</button><b>Beleg senden</b><span style="width:60px"></span></div>
+  <div class="scroll">
+    <div class="karte"><h3 id="sdSeitenT">Seiten</h3><div class="seiten" id="sdSeiten"></div></div>
+    <div class="karte">
+      <h3>Objekt</h3><p>Optional. Ohne Auswahl ordnet die ZachaAkte selbst zu.</p>
+      <div class="chips wrap" id="objChips"></div>
+      <div class="chips wrap hide" id="eigChips" style="margin-top:10px"></div>
+    </div>
+    <div class="karte">
+      <h3>Bezahlt</h3><p>Nur angeben, wenn nicht vom Geschäftskonto bezahlt.</p>
+      <div class="chips wrap" id="zahlChips"></div>
+    </div>
+    <div id="queueInfo" class="hide"></div>
+    <div id="status"></div>
+  </div>
+  <div class="leiste"><button class="btn" id="sdSend" type="button">An die ZachaAkte senden</button></div>
+</section>
+
+<!-- ===== Einrichten ===== -->
+<section id="setup" class="screen hell hide">
+  <div class="kopf"><span style="width:60px"></span><b>Einrichten</b><span style="width:60px"></span></div>
+  <div class="scroll">
+    <div class="karte">
+      <h3>Verbindung zur ZachaAkte</h3>
+      <p>Einmalig: den Einrichtungs-Link aus dem Chat hier einfügen. Danach landet jeder Scan als PDF in „00 Beleg-Eingang“.</p>
+      <textarea id="setupIn" rows="4" placeholder="https://…#setup=…"></textarea>
+      <div style="height:10px"></div>
+      <button class="btn" id="setupOk" type="button" style="width:100%">Speichern</button>
+      <p id="setupMsg" style="margin-top:10px"></p>
+    </div>
+    <div class="karte"><h3>Tipp</h3><p>In Safari: Teilen → „Zum Home-Bildschirm“. Dann startet der Scanner wie eine App, ohne Adressleiste.</p></div>
+  </div>
+</section>
+
+<script src="lib/pdf-lib.min.js"></script>
+<script>
+(function(){
+"use strict";
+var $=function(id){ return document.getElementById(id); };
+function el(t,c,x){ var n=document.createElement(t); if(c) n.className=c; if(x!=null) n.textContent=x; return n; }
+function zeige(id){ ["cam","edit","adjust","send","setup"].forEach(function(s){ $(s).classList.toggle("hide", s!==id); }); }
+function pad(n){ return String(n).padStart(2,"0"); }
+
+/* ================= Einstellungen (Upload-Ziel bleibt nur auf diesem Gerät) ================= */
+var CFG_KEY="zachascan.cfg";
+function cfgLesen(){ try{ return JSON.parse(localStorage.getItem(CFG_KEY)||"null"); }catch(e){ return null; } }
+function cfgAusText(t){
+  var m=/#setup=([A-Za-z0-9_\-]+)/.exec(String(t||"")) || /^([A-Za-z0-9_\-]{40,})$/.exec(String(t||"").trim());
+  if(!m) return null;
+  try{
+    var s=atob(m[1].replace(/-/g,"+").replace(/_/g,"/")); var p=s.split("|");
+    if(p.length<2 || !/^https:\/\/script\.google\.com\//.test(p[0])) return null;
+    return {url:p[0], key:p[1]};
+  }catch(e){ return null; }
+}
+(function(){
+  var c=cfgAusText(location.hash);
+  if(c){ try{ localStorage.setItem(CFG_KEY, JSON.stringify(c)); }catch(e){} history.replaceState(null,"",location.pathname); }
+})();
+$("setupOk").addEventListener("click", function(){
+  var c=cfgAusText($("setupIn").value);
+  if(!c){ $("setupMsg").textContent="Das ist kein gültiger Einrichtungs-Link."; return; }
+  try{ localStorage.setItem(CFG_KEY, JSON.stringify(c)); }catch(e){ $("setupMsg").textContent="Speichern ging nicht (privates Surfen?)."; return; }
+  $("setupMsg").textContent="✓ Verbunden."; setTimeout(starten, 500);
+});
+
+/* ================= OpenCV laden (im Hintergrund, ab dem 2. Start aus dem Cache) ================= */
+var cvP=null;
+function cvLaden(){
+  if(cvP) return cvP;
+  cvP=new Promise(function(res, rej){
+    // opencv.js liegt in zwei Teilen (Upload-Grenze) — byteweise zusammensetzen und als ein Skript laden
+    var s=document.createElement("script"); s.async=true;
+    // Emscripten-Module haben ein eigenes „then“ — ein Promise damit aufzulösen hängt sich endlos auf. Deshalb entfernen.
+    function fertig(m){ try{ delete m.then; }catch(e){} if(m.then) m.then=undefined; window.cv=m; res(m); }
+    s.onload=function(){
+      var c=window.cv, t0=Date.now();
+      if(c && c.Mat) return fertig(c);
+      if(c && typeof c.then==="function"){ c.then(function(m){ fertig(m); }); return; }
+      (function warten(){ var x=window.cv; if(x && x.Mat) return fertig(x); if(Date.now()-t0>30000) return rej(new Error("cv fehlt")); setTimeout(warten, 50); })();
+    };
+    s.onerror=function(){ rej(new Error("opencv.js nicht geladen")); };
+    Promise.all(["lib/opencv.1.js","lib/opencv.2.js"].map(function(u){ return fetch(u).then(function(r){ if(!r.ok) throw new Error(u+" "+r.status); return r.arrayBuffer(); }); }))
+      .then(function(t){ s.src=URL.createObjectURL(new Blob(t, {type:"application/javascript"})); document.head.appendChild(s); })
+      .catch(function(e){ rej(e); });
+  });
+  return cvP;
+}
+
+/* ================= Bildverarbeitung ================= */
+function median(u8){ var h=new Uint32Array(256), i; for(i=0;i<u8.length;i++) h[u8[i]]++; var half=u8.length/2, s=0; for(i=0;i<256;i++){ s+=h[i]; if(s>=half) return i; } return 128; }
+function ordnen(pts){            // tl, tr, br, bl
+  var s=pts.slice().sort(function(a,b){ return (a[0]+a[1])-(b[0]+b[1]); }), tl=s[0], br=s[3];
+  var r=[s[1],s[2]].sort(function(a,b){ return (a[0]-a[1])-(b[0]-b[1]); });
+  return [tl, r[1], br, r[0]];
+}
+function flaeche(q){ var a=0; for(var i=0;i<4;i++){ var p=q[i], n=q[(i+1)%4]; a+=p[0]*n[1]-n[0]*p[1]; } return Math.abs(a)/2; }
+function abst(a,b){ return Math.hypot(a[0]-b[0], a[1]-b[1]); }
+
+// Sucht das Papier im Bild: Kandidaten aus mehreren Kantenbildern (Canny streng und weich, Helligkeit nach Otsu),
+// dann zählt, wie gut jede Seite des Vierecks auf echten Kanten liegt. So gewinnt der Beleg — nicht der Bildrand oder ein Schatten.
+function findeQuad(cv, src){
+  var W=src.cols, H=src.rows, kand=[];
+  var g=new cv.Mat(), k=cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(5,5)), k3=cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3,3));
+  cv.cvtColor(src, g, cv.COLOR_RGBA2GRAY);
+  cv.GaussianBlur(g, g, new cv.Size(5,5), 0);
+  var v=median(g.data);
+  var weich=new cv.Mat(); cv.Canny(g, weich, 18, 54); var stuetze=new cv.Mat(); cv.dilate(weich, stuetze, k);
+  function sammeln(bin){
+    var cs=new cv.MatVector(), hi=new cv.Mat();
+    cv.findContours(bin, cs, hi, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+    for(var i=0;i<cs.size();i++){
+      var c=cs.get(i), a=cv.contourArea(c);
+      if(a < W*H*0.035){ c.delete(); continue; }
+      var hull=new cv.Mat(); cv.convexHull(c, hull);
+      var peri=cv.arcLength(hull, true), ap=new cv.Mat(), q=null;
+      [0.015,0.025,0.04,0.06].some(function(eps){
+        cv.approxPolyDP(hull, ap, eps*peri, true);
+        if(ap.rows===4){ q=[]; for(var j=0;j<4;j++) q.push([ap.data32S[j*2], ap.data32S[j*2+1]]); return true; }
+        return false;
+      });
+      if(!q){ var rr=cv.minAreaRect(hull), pts=cv.RotatedRect.points(rr); if(a > 0.8*rr.size.width*rr.size.height) q=pts.map(function(p){ return [p.x,p.y]; }); }
+      if(q) kand.push(ordnen(q));
+      ap.delete(); hull.delete(); c.delete();
+    }
+    cs.delete(); hi.delete();
+  }
+  var e=new cv.Mat();
+  cv.Canny(g, e, Math.max(10, 0.66*v), Math.min(255, 1.33*v+20)); cv.dilate(e, e, k); cv.morphologyEx(e, e, cv.MORPH_CLOSE, k); sammeln(e);
+  cv.dilate(weich, e, k); cv.morphologyEx(e, e, cv.MORPH_CLOSE, k); sammeln(e);
+  cv.threshold(g, e, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU); cv.morphologyEx(e, e, cv.MORPH_OPEN, k); sammeln(e);
+  // Wie viel jeder Seite liegt auf einer Kante?
+  var sd=stuetze.data, best=null, bestS=0;
+  function traeger(q){
+    var hit=0, n=0;
+    for(var s=0;s<4;s++){
+      var a=q[s], b=q[(s+1)%4], seg=0, segN=0;
+      for(var t=0.05;t<=0.95;t+=0.03){
+        var x=Math.round(a[0]+(b[0]-a[0])*t), y=Math.round(a[1]+(b[1]-a[1])*t);
+        if(x<1||y<1||x>=W-1||y>=H-1){ segN++; continue; }       // am Bildrand: keine Stütze
+        segN++; if(sd[y*W+x]) seg++;
+      }
+      if(seg/segN < 0.25) return 0;                              // eine Seite ohne Kante: kein Beleg
+      hit+=seg; n+=segN;
+    }
+    return hit/n;
+  }
+  kand.forEach(function(q){
+    var A=flaeche(q)/(W*H); if(A<0.035 || A>0.97) return;
+    var minSeite=Math.min(abst(q[0],q[1]), abst(q[1],q[2]), abst(q[2],q[3]), abst(q[3],q[0]));
+    if(minSeite < Math.min(W,H)*0.08) return;
+    var t=traeger(q); if(t<0.45) return;
+    var sc=t*t*Math.sqrt(A);
+    if(sc>bestS){ bestS=sc; best=q; }
+  });
+  g.delete(); e.delete(); k.delete(); k3.delete(); weich.delete(); stuetze.delete();
+  return best;
+}
+
+// Perspektive geradeziehen, auf höchstens maxL Pixel lange Seite
+function entzerren(cv, srcCanvas, q, maxL){
+  var w=Math.max(abst(q[0],q[1]), abst(q[3],q[2])), h=Math.max(abst(q[0],q[3]), abst(q[1],q[2]));
+  var f=Math.min(1, (maxL||2600)/Math.max(w,h)); w=Math.round(w*f); h=Math.round(h*f);
+  var src=cv.imread(srcCanvas), dst=new cv.Mat();
+  var a=cv.matFromArray(4,1,cv.CV_32FC2,[q[0][0],q[0][1],q[1][0],q[1][1],q[2][0],q[2][1],q[3][0],q[3][1]]);
+  var b=cv.matFromArray(4,1,cv.CV_32FC2,[0,0,w,0,w,h,0,h]);
+  var M=cv.getPerspectiveTransform(a,b);
+  cv.warpPerspective(src, dst, M, new cv.Size(w,h), cv.INTER_LINEAR, cv.BORDER_REPLICATE);
+  src.delete(); a.delete(); b.delete(); M.delete();
+  return dst;   // RGBA
+}
+
+// Schatten und Papiergrau entfernen: Hintergrund schätzen (dilatieren + Median, verkleinert), Bild durch Hintergrund teilen
+function hintergrundWeg(cv, ch){
+  // Papierhelligkeit schätzen: großes Maximum-Filter (füllt Schrift, Logos und farbige Kästen mit dem umgebenden Papier), dann glätten
+  var small=new cv.Mat(), s=Math.max(1, Math.max(ch.cols, ch.rows)/400);
+  cv.resize(ch, small, new cv.Size(Math.max(8,Math.round(ch.cols/s)), Math.max(8,Math.round(ch.rows/s))), 0, 0, cv.INTER_AREA);
+  var ks=Math.max(9, Math.round(Math.max(small.cols, small.rows)/9)|1);
+  var k=cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(ks,ks));
+  cv.dilate(small, small, k); cv.GaussianBlur(small, small, new cv.Size(ks,ks), 0);
+  var bg=new cv.Mat(); cv.resize(small, bg, new cv.Size(ch.cols, ch.rows), 0, 0, cv.INTER_LINEAR);
+  var out=new cv.Mat(); cv.divide(ch, bg, out, 255);
+  small.delete(); k.delete(); bg.delete();
+  return out;
+}
+function veredeln(cv, rgba, art){
+  var out=new cv.Mat();
+  if(art==="original"){ rgba.copyTo(out); return out; }
+  if(art==="farbe"){
+    var rgb=new cv.Mat(); cv.cvtColor(rgba, rgb, cv.COLOR_RGBA2RGB);
+    var ch=new cv.MatVector(); cv.split(rgb, ch);
+    var neu=new cv.MatVector();
+    for(var i=0;i<3;i++){ var c=ch.get(i), n=hintergrundWeg(cv, c); neu.push_back(n); c.delete(); n.delete(); }
+    var m=new cv.Mat(); cv.merge(neu, m);
+    m.convertTo(m, -1, 1.12, -14);                // etwas mehr Kontrast, Papier bleibt weiß
+    cv.cvtColor(m, out, cv.COLOR_RGB2RGBA);
+    rgb.delete(); ch.delete(); neu.delete(); m.delete();
+    return out;
+  }
+  var g=new cv.Mat(); cv.cvtColor(rgba, g, cv.COLOR_RGBA2GRAY);
+  var n2=hintergrundWeg(cv, g);
+  if(art==="sw"){
+    var bs=Math.max(15, (Math.round(Math.max(g.cols,g.rows)/60)|1));
+    cv.adaptiveThreshold(n2, n2, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, bs, 12);
+  } else {
+    n2.convertTo(n2, -1, 1.2, -25);
+  }
+  cv.cvtColor(n2, out, cv.COLOR_GRAY2RGBA);
+  g.delete(); n2.delete();
+  return out;
+}
+function drehen(cv, m, r){
+  r=((r%4)+4)%4; if(!r){ var c=new cv.Mat(); m.copyTo(c); return c; }
+  var o=new cv.Mat(); cv.rotate(m, o, r===1 ? cv.ROTATE_90_CLOCKWISE : r===2 ? cv.ROTATE_180 : cv.ROTATE_90_COUNTERCLOCKWISE); return o;
+}
+
+/* ================= Zustand ================= */
+var S={ seiten:[], aktuell:null, auto:true, filter:"farbe", stream:null, raf:0, letzte:null, stabil:0, busy:false, torch:false,
+        obj:"", eig:"", zahl:"" };
+var FILTER=[["farbe","Dokument"],["grau","Graustufen"],["sw","Schwarz-Weiß"],["original","Original"]];
+var OBJ=[["","automatisch"],["ZachaStay","ZachaStay"],["ETW-Laach85","ETW In der Laach"],["ETW-Loehrstr23","ETW Löhrstraße"],["Consulting","Consulting"],["Hausmeister","Hausmeister"],["Co-Hosting","Co-Hosting"],["Einkommensteuer","Einkommensteuer"]];
+var EIG=["BeSchTe GbR","Marcus Temme","Christoph Jung"];
+var ZAHL=[["","Geschäftskonto"],["bar","bar"],["privat","privat bezahlt"],["sonst","sonstige Zahlung"]];
+
+/* ================= Kamera ================= */
+var video=$("video"), ov=$("ov"), ox=ov.getContext("2d"), probe=document.createElement("canvas");
+function hinweis(t, gut){ var h=$("hint"); h.textContent=t; h.classList.toggle("ready", !!gut); }
+function kameraStart(){
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ hinweis("Keine Live-Kamera — Foto aufnehmen"); return Promise.resolve(false); }
+  hinweis("Kamera startet …");
+  return navigator.mediaDevices.getUserMedia({audio:false, video:{facingMode:{ideal:"environment"}, width:{ideal:3840}, height:{ideal:2160}}})
+    .then(function(st){
+      S.stream=st; video.srcObject=st;
+      var tr=st.getVideoTracks()[0], caps=tr && tr.getCapabilities ? tr.getCapabilities() : {};
+      $("torchBtn").classList.toggle("hide", !caps.torch);
+      try{ if(caps.focusMode && caps.focusMode.indexOf("continuous")>-1) tr.applyConstraints({advanced:[{focusMode:"continuous"}]}); }catch(e){}
+      return video.play().catch(function(){});
+    })
+    .then(function(){ hinweis("Beleg ins Bild halten"); S.stabil=0; S.letzte=null; schleife(); return true; })
+    .catch(function(){ hinweis("Kamera nicht erlaubt — Foto aufnehmen"); return false; });
+}
+function kameraStopp(){ if(S.raf) cancelAnimationFrame(S.raf); S.raf=0; if(S.stream){ S.stream.getTracks().forEach(function(t){ t.stop(); }); S.stream=null; } video.srcObject=null; }
+$("torchBtn").addEventListener("click", function(){
+  var tr=S.stream && S.stream.getVideoTracks()[0]; if(!tr) return;
+  S.torch=!S.torch; tr.applyConstraints({advanced:[{torch:S.torch}]}).catch(function(){});
+  this.setAttribute("aria-pressed", String(S.torch));
+});
+$("autoBtn").addEventListener("click", function(){ S.auto=!S.auto; this.setAttribute("aria-pressed", String(S.auto)); S.stabil=0; ring(0); });
+
+// Video-Ausschnitt → Bildschirm (object-fit:cover)
+function abbildung(){
+  var vw=video.videoWidth, vh=video.videoHeight, cw=ov.clientWidth, ch=ov.clientHeight;
+  var s=Math.max(cw/vw, ch/vh); return {s:s, dx:(cw-vw*s)/2, dy:(ch-vh*s)/2};
+}
+function ring(p){ $("ring").setAttribute("stroke-dashoffset", String(226*(1-Math.max(0,Math.min(1,p))))); }
+var letzteMessung=0;
+function schleife(){
+  S.raf=requestAnimationFrame(schleife);
+  var jetzt=performance.now();
+  if(S.busy || !video.videoWidth || jetzt-letzteMessung<110) return;
+  letzteMessung=jetzt;
+  var dpr=window.devicePixelRatio||1;
+  if(ov.width!==Math.round(ov.clientWidth*dpr)){ ov.width=Math.round(ov.clientWidth*dpr); ov.height=Math.round(ov.clientHeight*dpr); }
+  if(!window.cv || !window.cv.Mat){ return; }
+  var cv=window.cv, vw=video.videoWidth, vh=video.videoHeight, f=480/Math.max(vw,vh);
+  probe.width=Math.round(vw*f); probe.height=Math.round(vh*f);
+  var px=probe.getContext("2d", {willReadFrequently:true}); px.drawImage(video, 0, 0, probe.width, probe.height);
+  var m=cv.imread(probe), q=null;
+  try{ q=findeQuad(cv, m); }catch(e){} m.delete();
+  ox.clearRect(0,0,ov.width,ov.height);
+  if(!q){ S.stabil=0; S.letzte=null; ring(0); hinweis("Beleg ins Bild halten"); return; }
+  var anteil=flaeche(q)/(probe.width*probe.height);
+  if(anteil<0.05){ S.stabil=0; ring(0); hinweis("Näher ran"); }
+  // glätten
+  if(S.letzte){ q=q.map(function(p,i){ return [p[0]*0.6+S.letzte[i][0]*0.4, p[1]*0.6+S.letzte[i][1]*0.4]; }); }
+  var diag=Math.hypot(probe.width, probe.height);
+  var bew=S.letzte ? Math.max.apply(null, q.map(function(p,i){ return abst(p, S.letzte[i]); }))/diag : 1;
+  S.letzte=q;
+  if(anteil>=0.05){ if(bew<0.012) S.stabil++; else S.stabil=Math.max(0, S.stabil-2); }
+  var A=abbildung(), sc=1/f;
+  ox.save(); ox.scale(dpr,dpr);
+  ox.beginPath();
+  q.forEach(function(p,i){ var x=p[0]*sc*A.s+A.dx, y=p[1]*sc*A.s+A.dy; if(i) ox.lineTo(x,y); else ox.moveTo(x,y); });
+  ox.closePath();
+  var bereit=S.stabil>=4;
+  ox.fillStyle=bereit?"rgba(108,196,155,.22)":"rgba(97,169,214,.16)"; ox.fill();
+  ox.lineWidth=3; ox.strokeStyle=bereit?"#6CC49B":"#61A9D6"; ox.stroke();
+  ox.restore();
+  if(anteil>=0.05){
+    if(S.auto){ ring(S.stabil/9); hinweis(bereit ? "Stillhalten …" : "Gefunden — ruhig halten", bereit); }
+    else hinweis("Gefunden — auslösen", true);
+    if(S.auto && S.stabil>=9) ausloesen(q.map(function(p){ return [p[0]*sc, p[1]*sc]; }));
+  }
+}
+
+// Auslösen: volles Kamerabild einfrieren, Ecken übernehmen
+function ausloesen(qVoll){
+  if(S.busy) return;
+  S.busy=true; S.stabil=0; ring(0);
+  var fl=$("flash"); fl.classList.add("an"); setTimeout(function(){ fl.classList.remove("an"); }, 60);
+  if(navigator.vibrate) try{ navigator.vibrate(30); }catch(e){}
+  var c=document.createElement("canvas"); c.width=video.videoWidth; c.height=video.videoHeight;
+  c.getContext("2d").drawImage(video, 0, 0);
+  seiteAnlegen(c, qVoll || null);
+}
+$("shutter").addEventListener("click", function(){
+  if(!S.stream || !video.videoWidth){ $("fileIn").click(); return; }
+  var q=S.letzte, f=Math.max(video.videoWidth, video.videoHeight)/480;
+  ausloesen(q ? q.map(function(p){ return [p[0]*f, p[1]*f]; }) : null);
+});
+$("fileIn").addEventListener("change", function(e){
+  var file=e.target.files && e.target.files[0]; e.target.value=""; if(!file) return;
+  var img=new Image(); img.onload=function(){
+    var c=document.createElement("canvas"), f=Math.min(1, 4000/Math.max(img.naturalWidth, img.naturalHeight));
+    c.width=Math.round(img.naturalWidth*f); c.height=Math.round(img.naturalHeight*f); c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+    URL.revokeObjectURL(img.src); S.busy=true; seiteAnlegen(c, null);
+  }; img.src=URL.createObjectURL(file);
+});
+
+function seiteAnlegen(canvas, q){
+  $("busy").classList.remove("hide");
+  cvLaden().then(function(cv){
+    if(!q){ // Ecken im großen Bild suchen (verkleinert)
+      var f=900/Math.max(canvas.width, canvas.height), k=document.createElement("canvas");
+      k.width=Math.round(canvas.width*f); k.height=Math.round(canvas.height*f); k.getContext("2d").drawImage(canvas,0,0,k.width,k.height);
+      var m=cv.imread(k), g=findeQuad(cv, m); m.delete();
+      q = g ? g.map(function(p){ return [p[0]/f, p[1]/f]; }) : [[0,0],[canvas.width,0],[canvas.width,canvas.height],[0,canvas.height]];
+    }
+    S.aktuell={quelle:canvas, quad:q, rot:0, filter:S.filter};
+    kameraStopp(); $("busy").classList.add("hide");
+    vorschau(); zeige("edit");
+  }).catch(function(){
+    $("busy").classList.add("hide");
+    S.aktuell={quelle:canvas, quad:[[0,0],[canvas.width,0],[canvas.width,canvas.height],[0,canvas.height]], rot:0, filter:"original", ohneCv:true};
+    kameraStopp(); vorschau(); zeige("edit");
+  }).then(function(){ S.busy=false; });
+}
+
+/* ================= Seite prüfen ================= */
+var edC=$("edCanvas");
+(function(){
+  var row=$("filterChips");
+  FILTER.forEach(function(f){ var c=el("button","chip",f[1]); c.type="button"; c.dataset.f=f[0]; row.appendChild(c); });
+  row.addEventListener("click", function(e){ var c=e.target.closest(".chip"); if(!c || !S.aktuell) return; S.aktuell.filter=S.filter=c.dataset.f; vorschau(); });
+})();
+function seiteRendern(p, maxL){         // → Canvas
+  var cv=window.cv;
+  if(p.ohneCv || !cv || !cv.Mat){
+    var c=document.createElement("canvas"), r=((p.rot%4)+4)%4, w=p.quelle.width, h=p.quelle.height;
+    c.width=r%2?h:w; c.height=r%2?w:h; var x=c.getContext("2d"); x.translate(c.width/2,c.height/2); x.rotate(r*Math.PI/2); x.drawImage(p.quelle,-w/2,-h/2); return c;
+  }
+  var flach=entzerren(cv, p.quelle, p.quad, maxL), fein=veredeln(cv, flach, p.filter), dr=drehen(cv, fein, p.rot);
+  var out=document.createElement("canvas"); cv.imshow(out, dr);
+  flach.delete(); fein.delete(); dr.delete();
+  return out;
+}
+function vorschau(){
+  var p=S.aktuell; if(!p) return;
+  Array.prototype.forEach.call($("filterChips").children, function(c){ c.setAttribute("aria-pressed", String(c.dataset.f===p.filter)); });
+  $("filterChips").classList.toggle("hide", !!p.ohneCv);
+  $("edTitel").textContent="Seite "+(S.seiten.length+1);
+  var c=seiteRendern(p, 1400);
+  edC.width=c.width; edC.height=c.height; edC.getContext("2d").drawImage(c,0,0);
+}
+$("edRot").addEventListener("click", function(){ if(S.aktuell){ S.aktuell.rot=(S.aktuell.rot+1)%4; vorschau(); } });
+$("edRetake").addEventListener("click", function(){ S.aktuell=null; zurKamera(); });
+function seiteUebernehmen(){
+  var p=S.aktuell; if(!p) return Promise.resolve();
+  var c=seiteRendern(p, 2600);
+  return new Promise(function(res){ c.toBlob(function(b){
+    var t=document.createElement("canvas"), f=200/Math.max(c.width,c.height); t.width=Math.round(c.width*f); t.height=Math.round(c.height*f); t.getContext("2d").drawImage(c,0,0,t.width,t.height);
+    S.seiten.push({blob:b, w:c.width, h:c.height, thumb:t.toDataURL("image/jpeg",0.7)}); S.aktuell=null; res();
+  }, "image/jpeg", p.filter==="sw" ? 0.9 : 0.84); });
+}
+$("edMore").addEventListener("click", function(){ var b=this; b.disabled=true; seiteUebernehmen().then(function(){ b.disabled=false; zurKamera(); }); });
+$("edDone").addEventListener("click", function(){ var b=this; b.disabled=true; seiteUebernehmen().then(function(){ b.disabled=false; sendenZeigen(); }); });
+
+/* ================= Ecken anpassen ================= */
+var adC=$("adCanvas"), adSvg=$("adSvg"), lupe=$("lupe"), adF=1, adQ=null, adOff={x:0,y:0};
+$("edCorners").addEventListener("click", function(){
+  var p=S.aktuell; if(!p) return; zeige("adjust");
+  var st=$("adStage"), W=st.clientWidth, H=st.clientHeight, q=p.quelle;
+  adF=Math.min((W-40)/q.width, (H-40)/q.height);
+  adC.width=Math.round(q.width*adF); adC.height=Math.round(q.height*adF);
+  adC.getContext("2d").drawImage(q,0,0,adC.width,adC.height);
+  adOff={x:Math.round((W-adC.width)/2), y:Math.round((H-adC.height)/2)};
+  adC.style.left=adOff.x+"px"; adC.style.top=adOff.y+"px";
+  adSvg.setAttribute("width", W); adSvg.setAttribute("height", H);
+  adQ=p.quad.map(function(pt){ return [pt[0]*adF+adOff.x, pt[1]*adF+adOff.y]; });
+  adZeichnen();
+});
+function adZeichnen(){
+  var pts=adQ.map(function(p){ return p.join(","); }).join(" ");
+  adSvg.innerHTML='<polygon points="'+pts+'" fill="rgba(97,169,214,.18)" stroke="#61A9D6" stroke-width="2.5"/>'+
+    adQ.map(function(p,i){ return '<circle data-i="'+i+'" cx="'+p[0]+'" cy="'+p[1]+'" r="16" fill="rgba(255,255,255,.25)" stroke="#fff" stroke-width="3"/>'; }).join("");
+}
+(function(){
+  var st=$("adStage"), aktiv=-1;
+  function pos(e){ var r=st.getBoundingClientRect(); return [e.clientX-r.left, e.clientY-r.top]; }
+  st.addEventListener("pointerdown", function(e){
+    var p=pos(e), bi=-1, bd=60;
+    adQ.forEach(function(q,i){ var d=abst(p,q); if(d<bd){ bd=d; bi=i; } });
+    if(bi<0) return; aktiv=bi; st.setPointerCapture(e.pointerId); e.preventDefault();
+  });
+  st.addEventListener("pointermove", function(e){
+    if(aktiv<0) return;
+    var p=pos(e); p[0]=Math.max(adOff.x, Math.min(adOff.x+adC.width, p[0])); p[1]=Math.max(adOff.y, Math.min(adOff.y+adC.height, p[1]));
+    adQ[aktiv]=p; adZeichnen();
+    // Lupe über dem Finger
+    var lx=lupe.getContext("2d"), z=2.5, sx=(p[0]-adOff.x)-24, sy=(p[1]-adOff.y)-24;
+    lupe.classList.remove("hide"); lupe.style.left=(p[0]-60)+"px"; lupe.style.top=(p[1]-170)+"px";
+    lx.fillStyle="#000"; lx.fillRect(0,0,120,120); lx.drawImage(adC, sx, sy, 48, 48, 0, 0, 120, 120);
+    lx.strokeStyle="#61A9D6"; lx.lineWidth=1.5; lx.beginPath(); lx.moveTo(60,48); lx.lineTo(60,72); lx.moveTo(48,60); lx.lineTo(72,60); lx.stroke();
+  });
+  function ende(){ aktiv=-1; lupe.classList.add("hide"); }
+  st.addEventListener("pointerup", ende); st.addEventListener("pointercancel", ende);
+})();
+$("adFull").addEventListener("click", function(){ adQ=[[adOff.x,adOff.y],[adOff.x+adC.width,adOff.y],[adOff.x+adC.width,adOff.y+adC.height],[adOff.x,adOff.y+adC.height]]; adZeichnen(); });
+$("adOk").addEventListener("click", function(){
+  S.aktuell.quad=ordnen(adQ.map(function(p){ return [(p[0]-adOff.x)/adF, (p[1]-adOff.y)/adF]; }));
+  vorschau(); zeige("edit");
+});
+
+/* ================= Kamera-Bildschirm ================= */
+function zurKamera(){
+  zeige("cam");
+  var tb=$("thumbBtn"), n=S.seiten.length;
+  tb.classList.toggle("da", n>0); $("fertigBtn").classList.toggle("da", n>0);
+  if(n){ tb.style.backgroundImage="url("+S.seiten[n-1].thumb+")"; tb.textContent=String(n); }
+  $("fertigBtn").textContent=n ? "Fertig ("+n+")" : "Fertig";
+  ox.clearRect(0,0,ov.width,ov.height);
+  kameraStart();
+}
+$("fertigBtn").addEventListener("click", function(){ kameraStopp(); sendenZeigen(); });
+$("thumbBtn").addEventListener("click", function(){ kameraStopp(); sendenZeigen(); });
+$("closeBtn").addEventListener("click", function(){
+  if(S.seiten.length && !confirmFrei()) return;
+  S.seiten=[]; S.aktuell=null; zurKamera();
+});
+function confirmFrei(){ return window.confirm("Aufgenommene Seiten verwerfen?"); }
+
+/* ================= Senden ================= */
+function chipsBauen(id, liste, wert, setzen){
+  var row=$(id); row.textContent="";
+  liste.forEach(function(x){
+    var k=Array.isArray(x)?x[0]:x, t=Array.isArray(x)?x[1]:x;
+    var c=el("button","chip",t); c.type="button"; c.setAttribute("aria-pressed", String(k===wert));
+    c.addEventListener("click", function(){ setzen(k); }); row.appendChild(c);
+  });
+}
+function sendenZeigen(){
+  zeige("send");
+  var box=$("sdSeiten"); box.textContent="";
+  S.seiten.forEach(function(s,i){
+    var d=el("div","seite"), im=el("img"); im.src=s.thumb; im.alt="Seite "+(i+1); d.appendChild(im);
+    var x=el("button",null,"×"); x.type="button"; x.setAttribute("aria-label","Seite "+(i+1)+" entfernen");
+    x.addEventListener("click", function(){ S.seiten.splice(i,1); if(!S.seiten.length) zurKamera(); else sendenZeigen(); });
+    d.appendChild(x); d.appendChild(el("span",null,"Seite "+(i+1))); box.appendChild(d);
+  });
+  $("sdSeitenT").textContent=S.seiten.length===1 ? "1 Seite" : S.seiten.length+" Seiten — ein Beleg";
+  function objNeu(k){ S.obj=k; if(k!=="Co-Hosting") S.eig=""; sendenZeigen(); }
+  chipsBauen("objChips", OBJ, S.obj, objNeu);
+  $("eigChips").classList.toggle("hide", S.obj!=="Co-Hosting");
+  chipsBauen("eigChips", EIG, S.eig, function(k){ S.eig=(S.eig===k?"":k); sendenZeigen(); });
+  chipsBauen("zahlChips", ZAHL, S.zahl, function(k){ S.zahl=k; sendenZeigen(); });
+  warteAnzeigen();
+}
+$("sdBack").addEventListener("click", function(){ zurKamera(); });
+
+function dateiName(){
+  var d=new Date(), t=d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate())+"_"+pad(d.getHours())+pad(d.getMinutes())+pad(d.getSeconds());
+  var n="Scan_"+t;
+  if(S.obj) n+="__obj-"+S.obj;
+  if(S.eig) n+="__eig-"+S.eig.replace(/[^A-Za-z0-9ÄÖÜäöüß]+/g,"-");
+  if(S.zahl) n+="__zahl-"+S.zahl;
+  return n+".pdf";
+}
+function pdfBauen(seiten){
+  var PDF=window.PDFLib;
+  return PDF.PDFDocument.create().then(function(doc){
+    return seiten.reduce(function(p,s){ return p.then(function(){
+      return s.blob.arrayBuffer().then(function(buf){ return doc.embedJpg(buf); }).then(function(img){
+        var W=595.28, H=W*s.h/s.w; var pg=doc.addPage([W,H]); pg.drawImage(img,{x:0,y:0,width:W,height:H});
+      });
+    }); }, Promise.resolve()).then(function(){ doc.setTitle("Beleg-Scan"); doc.setProducer("ZachaAkte Scanner"); return doc.save(); });
+  }).then(function(bytes){ return new Blob([bytes], {type:"application/pdf"}); });
+}
+function b64(blob){ return new Promise(function(res,rej){ var r=new FileReader(); r.onload=function(){ res(String(r.result).split(",")[1]); }; r.onerror=rej; r.readAsDataURL(blob); }); }
+function hochladen(eintrag){
+  var cfg=cfgLesen(); if(!cfg) return Promise.reject(new Error("nicht eingerichtet"));
+  return b64(eintrag.blob).then(function(data){
+    return fetch(cfg.url, {method:"POST", redirect:"follow", headers:{"Content-Type":"text/plain;charset=utf-8"},
+      body:JSON.stringify({key:cfg.key, name:eintrag.name, mime:"application/pdf", data:data})});
+  }).then(function(r){ return r.json(); }).then(function(j){ if(!j || !j.ok) throw new Error((j&&j.error)||"abgelehnt"); return j; });
+}
+
+/* Warteschlange: was ohne Netz gescannt wurde, geht später raus (IndexedDB, nur auf diesem Gerät) */
+var dbP=null;
+function db(){
+  if(dbP) return dbP;
+  dbP=new Promise(function(res,rej){ var r=indexedDB.open("zachascan",1); r.onupgradeneeded=function(){ r.result.createObjectStore("warte",{keyPath:"id"}); }; r.onsuccess=function(){ res(r.result); }; r.onerror=function(){ rej(r.error); }; });
+  return dbP;
+}
+function warteOp(mode, fn){ return db().then(function(d){ return new Promise(function(res,rej){ var tx=d.transaction("warte",mode), st=tx.objectStore("warte"), out=fn(st); tx.oncomplete=function(){ res(out && out.result!==undefined ? out.result : undefined); }; tx.onerror=function(){ rej(tx.error); }; }); }); }
+function warteAlle(){ return warteOp("readonly", function(st){ return st.getAll(); }); }
+function warteRein(e){ return warteOp("readwrite", function(st){ st.put(e); }); }
+function warteRaus(id){ return warteOp("readwrite", function(st){ st.delete(id); }); }
+function warteAnzeigen(){
+  warteAlle().then(function(l){ var q=$("queueInfo"); q.classList.toggle("hide", !l.length); q.textContent=l.length ? l.length+(l.length===1?" Beleg wartet":" Belege warten")+" auf Netz — geht automatisch raus." : ""; }).catch(function(){});
+}
+var nachLauf=false;
+function nachsenden(){
+  if(nachLauf || !cfgLesen()) return; nachLauf=true;
+  warteAlle().then(function(l){
+    return l.reduce(function(p,e){ return p.then(function(){ return hochladen(e).then(function(){ return warteRaus(e.id); }).catch(function(){}); }); }, Promise.resolve());
+  }).catch(function(){}).then(function(){ nachLauf=false; warteAnzeigen(); });
+}
+window.addEventListener("online", nachsenden);
+
+$("sdSend").addEventListener("click", function(){
+  var b=this, st=$("status");
+  if(!cfgLesen()){ zeige("setup"); return; }
+  if(!S.seiten.length) return;
+  b.disabled=true; st.className=""; st.textContent="PDF wird gebaut …";
+  var name=dateiName();
+  pdfBauen(S.seiten).then(function(pdf){
+    var e={id:String(Date.now()), name:name, blob:pdf, wann:new Date().toISOString()};
+    st.textContent="wird gesendet …";
+    return hochladen(e).then(function(){
+      st.className="ok"; st.textContent="✓ In der ZachaAkte angekommen — sie liest, benennt und gleicht ab.";
+    }, function(err){
+      return warteRein(e).then(function(){ st.className="err"; st.textContent="Kein Netz oder Fehler ("+(err&&err.message||"?")+") — gespeichert, geht automatisch raus."; });
+    });
+  }).catch(function(err){ st.className="err"; st.textContent="Fehler: "+(err&&err.message||err); })
+  .then(function(){
+    b.disabled=false; warteAnzeigen();
+    if(/ok|err/.test(st.className)) setTimeout(function(){ S.seiten=[]; S.obj=""; S.eig=""; S.zahl=""; st.textContent=""; st.className=""; zurKamera(); }, 1600);
+  });
+});
+
+/* ================= Start ================= */
+function starten(){
+  if(!cfgLesen()){ zeige("setup"); return; }
+  cvLaden().catch(function(){ hinweis("Bilderkennung lädt nicht — ohne Kantenerkennung"); });
+  zurKamera(); nachsenden();
+}
+document.addEventListener("visibilitychange", function(){
+  if(document.hidden) kameraStopp();
+  else if(!$("cam").classList.contains("hide") && !S.stream) kameraStart();
+});
+if("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(function(){});
+window.__scan={findeQuad:findeQuad, entzerren:entzerren, veredeln:veredeln, ordnen:ordnen, cvLaden:cvLaden, S:S, seiteAnlegen:seiteAnlegen, pdfBauen:pdfBauen, seiteUebernehmen:seiteUebernehmen, dateiName:dateiName};
+starten();
+})();
+</script>
+</body>
+</html>
