@@ -200,7 +200,8 @@ function cfgAusText(t){
 }
 (function(){
   var c=cfgAusText(location.hash);
-  if(c){ try{ localStorage.setItem(CFG_KEY, JSON.stringify(c)); }catch(e){} history.replaceState(null,"",location.pathname); }
+  // Link bleibt in der Adresse stehen: „Zum Home-Bildschirm“ übernimmt ihn, das Icon hat eigenen Speicher und richtet sich beim ersten Start selbst ein.
+  if(c){ try{ localStorage.setItem(CFG_KEY, JSON.stringify(c)); }catch(e){} }
 })();
 $("setupOk").addEventListener("click", function(){
   var c=cfgAusText($("setupIn").value);
